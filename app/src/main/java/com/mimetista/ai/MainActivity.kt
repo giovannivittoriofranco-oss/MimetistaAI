@@ -18,11 +18,38 @@ class MainActivity : Activity() {
         val response = findViewById<TextView>(R.id.responseText)
 
         button.setOnClickListener {
-            val pergunta = input.text.toString()
 
-            if (pergunta.isNotBlank()) {
-                response.text = "Vou pesquisar:\n\n$pergunta"
+            val pergunta = input.text.toString().trim()
+
+            if (pergunta.isEmpty()) {
+                response.text = "Digite alguma coisa para conversar comigo."
+                return@setOnClickListener
             }
+
+            val resposta = responder(pergunta)
+
+            response.text = resposta
         }
     }
-}
+
+    private fun responder(pergunta: String): String {
+
+        val texto = pergunta.lowercase()
+
+        return when {
+            texto.contains("oi") ||
+            texto.contains("olá") ||
+            texto.contains("ola") -> {
+                "Olá! Eu sou o Mimetista AI. 👋\n\nComo posso ajudar?"
+            }
+
+            texto.contains("quem é você") ||
+            texto.contains("quem e voce") -> {
+                "Eu sou o Mimetista AI.\n\nMeu objetivo é pesquisar, aprender com informações e ajudar você em tarefas."
+            }
+
+            texto.contains("tudo bem") -> {
+                "Tudo certo por aqui. 😄\n\nO que você quer fazer?"
+            }
+
+            else ->
