@@ -5,8 +5,15 @@ import android.os.Bundle
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 
 class MainActivity : Activity() {
+
+    private val client = OkHttpClient()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -22,37 +29,61 @@ class MainActivity : Activity() {
             val pergunta = input.text.toString().trim()
 
             if (pergunta.isEmpty()) {
-                response.text = "Digite alguma coisa para conversar comigo."
+                response.text = "Digite alguma coisa."
                 return@setOnClickListener
             }
 
-            response.text = responder(pergunta)
-        }
-    }
+            response.text = "Mimetista está pensando..."
 
-    private fun responder(pergunta: String): String {
+            val json = JSONObject()
+            json.put("message", pergunta)
 
-        val texto = pergunta.lowercase()
+            val body = json.toString()
+                .toRequestBody("application/json".toMediaType())
 
-        return when {
-            texto.contains("oi") ||
-            texto.contains("olá") ||
-            texto.contains("ola") -> {
-                "Olá! Eu sou o Mimetista AI. 👋\n\nComo posso ajudar?"
-            }
+            val request = Request.Builder()
+                .url("https://mimetistaai-1.onrender.com/chat")
+                .post(body)
+                .build()
 
-            texto.contains("quem é você") ||
-            texto.contains("quem e voce") -> {
-                "Eu sou o Mimetista AI.\n\nEstou sendo desenvolvido para conversar, pesquisar informações, aprender com o contexto e ajudar em tarefas."
-            }
+            client.newCall(request).enqueue(object : okhttp3.Callback {
 
-            texto.contains("tudo bem") -> {
-                "Tudo certo por aqui. 😄\n\nO que você quer fazer?"
-            }
+                override fun onFailure(
+                    call: okhttp3.Call,
+                    e: java.io.IOException
+                ) {
+                    runOnUiThread {
+                        response.text =
+                            "Não consegui conectar ao servidor.\n\n${e.message}"
+                    }
+                }
 
-            else -> {
-                "Entendi:\n\n$pergunta\n\nEstou sendo preparado para responder usando uma IA real."
-            }
+                override fun onResponse(
+                    call: okhttp3.Call,
+                    responseHttp: okhttp3.Response
+                ) {
+                    val resultado = responseHttp.body?.string() ?: ""
+
+                    runOnUiThread {
+
+                        if (responseHttp.isSuccessful) {
+                            try {
+                                val jsonResposta = JSONObject(resultado)
+                                response.text =
+                                    jsonResposta.optString(
+                                        "response",
+                                        "A IA não retornou uma resposta."
+                                    )
+                            } catch (e: Exception) {
+                                response.text = resultado
+                            }
+                        } else {
+                            response.text =
+                                "Erro do servidor: ${responseHttp.code}\n\n$resultado"
+                        }
+                    }
+                }
+            })
         }
     }
 }
