@@ -1,0 +1,27 @@
+name: Testar servidor MimetistaAI
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-server:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar projeto
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: server/package.json
+
+      - name: Instalar dependências
+        working-directory: server
+        run: npm install
+
+      - name: Verificar servidor
+        working-directory: server
+        run: node --check server.js
