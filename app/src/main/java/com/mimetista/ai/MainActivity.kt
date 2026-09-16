@@ -26,9 +26,7 @@ class MainActivity : Activity() {
                 return@setOnClickListener
             }
 
-            val resposta = responder(pergunta)
-
-            response.text = resposta
+            response.text = responder(pergunta)
         }
     }
 
@@ -45,11 +43,16 @@ class MainActivity : Activity() {
 
             texto.contains("quem é você") ||
             texto.contains("quem e voce") -> {
-                "Eu sou o Mimetista AI.\n\nMeu objetivo é pesquisar, aprender com informações e ajudar você em tarefas."
+                "Eu sou o Mimetista AI.\n\nEstou sendo desenvolvido para conversar, pesquisar informações, aprender com o contexto e ajudar em tarefas."
             }
 
             texto.contains("tudo bem") -> {
                 "Tudo certo por aqui. 😄\n\nO que você quer fazer?"
             }
 
-            else ->
+            else -> {
+                "Entendi:\n\n$pergunta\n\nEstou sendo preparado para responder usando uma IA real."
+            }
+        }
+    }
+}
