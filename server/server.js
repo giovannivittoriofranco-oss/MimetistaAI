@@ -30,7 +30,7 @@ app.post("/chat", async (req, res) => {
     }
 
     const resposta = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      models/gemini-3.6-flash,
       contents: pergunta
     });
 
