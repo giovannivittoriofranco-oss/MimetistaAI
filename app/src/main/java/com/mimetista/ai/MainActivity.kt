@@ -9,7 +9,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
 import org.json.JSONObject
 
 class MainActivity : Activity() {
@@ -36,41 +35,15 @@ class MainActivity : Activity() {
 
             response.text = "Mimetista está pensando..."
 
-            val messages = JSONArray()
-
-            messages.put(
-                JSONObject().apply {
-                    put("role", "system")
-                    put(
-                        "content",
-                        "Você é o MimetistaAI. Responda sempre em português, seja direto e amigável."
-                    )
-                }
-            )
-
-            messages.put(
-                JSONObject().apply {
-                    put("role", "user")
-                    put("content", pergunta)
-                }
-            )
-
             val json = JSONObject().apply {
-                put("messages", messages)
-                put("max_tokens", 128)
-                put(
-                    "chat_template_kwargs",
-                    JSONObject().apply {
-                        put("enable_thinking", false)
-                    }
-                )
+                put("message", pergunta)
             }
 
             val body = json.toString()
                 .toRequestBody("application/json".toMediaType())
 
             val request = Request.Builder()
-                .url("http://127.0.0.1:8080/v1/chat/completions")
+                .url("http://127.0.0.1:8090/chat")
                 .post(body)
                 .build()
 
@@ -82,7 +55,7 @@ class MainActivity : Activity() {
                 ) {
                     runOnUiThread {
                         response.text =
-                            "Não consegui conectar ao cérebro local.\n\n${e.message}"
+                            "Não consegui conectar à memória local.\n\n${e.message}"
                     }
                 }
 
@@ -96,32 +69,27 @@ class MainActivity : Activity() {
                     runOnUiThread {
 
                         if (responseHttp.isSuccessful) {
+
                             try {
                                 val jsonResposta =
                                     JSONObject(resultado)
 
-                                val escolhas =
-                                    jsonResposta.getJSONArray("choices")
-
-                                val mensagem =
-                                    escolhas
-                                        .getJSONObject(0)
-                                        .getJSONObject("message")
-
                                 response.text =
-                                    mensagem.optString(
-                                        "content",
-                                        "O cérebro não retornou uma resposta."
+                                    jsonResposta.optString(
+                                        "response",
+                                        "O Mimetista não retornou uma resposta."
                                     )
 
                             } catch (e: Exception) {
+
                                 response.text =
                                     "Erro ao interpretar a resposta."
                             }
 
                         } else {
+
                             response.text =
-                                "Erro do cérebro: ${responseHttp.code}\n\n$resultado"
+                                "Erro da memória local: ${responseHttp.code}\n\n$resultado"
                         }
                     }
                 }
