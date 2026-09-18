@@ -11,10 +11,15 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 
 class MainActivity : Activity() {
 
-    private val client = OkHttpClient()
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .build()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -34,6 +39,8 @@ class MainActivity : Activity() {
                 return@setOnClickListener
             }
 
+            // Impede vários cliques durante a mesma pergunta
+            button.isEnabled = false
             response.text = "Mimetista está pensando..."
 
             val json = JSONObject().apply {
@@ -55,8 +62,11 @@ class MainActivity : Activity() {
                     e: IOException
                 ) {
                     runOnUiThread {
+                        button.isEnabled = true
+
                         response.text =
-                            "Não consegui conectar ao MimetistaAI.\n\n${e.message ?: "Erro de conexão"}"
+                            "Não consegui conectar ao MimetistaAI.\n\n" +
+                            (e.message ?: "Erro de conexão")
                     }
                 }
 
@@ -70,18 +80,27 @@ class MainActivity : Activity() {
 
                         runOnUiThread {
 
+                            button.isEnabled = true
+
                             if (it.isSuccessful) {
 
                                 try {
+
                                     val jsonResposta =
                                         JSONObject(resultado)
 
                                     val resposta =
-                                        jsonResposta.optString("response", "")
+                                        jsonResposta.optString(
+                                            "response",
+                                            ""
+                                        )
 
                                     if (resposta.isNotBlank()) {
+
                                         response.text = resposta
+
                                     } else {
+
                                         response.text =
                                             "O MimetistaAI não retornou uma resposta."
                                     }
@@ -89,13 +108,13 @@ class MainActivity : Activity() {
                                 } catch (e: Exception) {
 
                                     response.text =
-                                        "Resposta recebida, mas não consegui interpretá-la."
+                                        "Recebi uma resposta, mas não consegui interpretá-la."
                                 }
 
                             } else {
 
                                 response.text =
-                                    "O MimetistaAI encontrou um erro (${it.code}).\n\n$resultado"
+                                    "Erro do MimetistaAI (${it.code}).\n\n$resultado"
                             }
                         }
                     }
