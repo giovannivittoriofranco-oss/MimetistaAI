@@ -58,7 +58,7 @@ function salvarMemoria(memoria) {
       JSON.stringify(memoria, null, 2)
     );
   } catch (erro) {
-    console.error("Erro ao salvar memória:", erro.message);
+    console.log("Erro ao salvar memória:", erro.message);
   }
 }
 
@@ -90,10 +90,26 @@ app.get("/memory", (req, res) => {
 });
 
 /* =========================================================
-   TIMEOUT
+   CONFIGURAÇÕES
 ========================================================= */
 
-async function fetchComTimeout(url, options, timeout = 45000) {
+const TEMPO_MAXIMO = 10 * 60 * 1000; // 10 minutos
+const TIMEOUT_API = 45 * 1000;        // 45 segundos
+const ESPERA_ENTRE_CICLOS = 3000;     // 3 segundos
+
+/* =========================================================
+   ESPERA
+========================================================= */
+
+function esperar(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/* =========================================================
+   FETCH COM TIMEOUT
+========================================================= */
+
+async function fetchComTimeout(url, options, timeout = TIMEOUT_API) {
 
   const controller = new AbortController();
 
@@ -124,7 +140,7 @@ async function consultarOpenRouter(messages) {
   const apiKey = process.env.OPENROUTER_API_KEY;
 
   if (!apiKey) {
-    throw new Error("OPENROUTER_API_KEY não configurada");
+    throw new Error("API não configurada");
   }
 
   const modelos = [
@@ -134,13 +150,15 @@ async function consultarOpenRouter(messages) {
     "deepseek/deepseek-r1-0528:free"
   ];
 
-  let ultimoErro = null;
+  let ultimoErro = "Nenhum modelo respondeu";
 
   for (const modelo of modelos) {
 
     try {
 
-      console.log(`OpenRouter tentando: ${modelo}`);
+      console.log(
+        `🧠 OpenRouter → ${modelo}`
+      );
 
       const resposta = await fetchComTimeout(
         "https://openrouter.ai/api/v1/chat/completions",
@@ -160,11 +178,11 @@ async function consultarOpenRouter(messages) {
             messages,
             temperature: 0.7
           })
-        },
-        40000
+        }
       );
 
-      const dados = await resposta.json().catch(() => ({}));
+      const dados =
+        await resposta.json().catch(() => ({}));
 
       if (!resposta.ok) {
 
@@ -173,7 +191,7 @@ async function consultarOpenRouter(messages) {
           `HTTP ${resposta.status}`;
 
         console.log(
-          `OpenRouter ${modelo} falhou: ${ultimoErro}`
+          `❌ OpenRouter ${modelo}: ${ultimoErro}`
         );
 
         continue;
@@ -198,18 +216,16 @@ async function consultarOpenRouter(messages) {
       ultimoErro =
         erro?.name === "AbortError"
           ? "Timeout"
-          : erro?.message || "Erro desconhecido";
+          : erro?.message || "Erro";
 
       console.log(
-        `OpenRouter ${modelo} falhou: ${ultimoErro}`
+        `❌ OpenRouter ${modelo}: ${ultimoErro}`
       );
 
     }
   }
 
-  throw new Error(
-    `OpenRouter indisponível: ${ultimoErro}`
-  );
+  throw new Error(ultimoErro);
 }
 
 /* =========================================================
@@ -221,28 +237,24 @@ async function consultarGemini(messages) {
   const apiKey = process.env.GEMINI_API_KEY;
 
   if (!apiKey) {
-    throw new Error("GEMINI_API_KEY não configurada");
+    throw new Error("API não configurada");
   }
 
-  /*
-    Modelo escolhido para texto.
-    Se esse modelo estiver indisponível na conta,
-    o sistema simplesmente passa para a próxima API.
-  */
   const modelo = "gemini-2.5-flash-lite";
 
-  const systemMessage =
+  const sistema =
     messages.find(
-      (item) => item.role === "system"
+      item => item.role === "system"
     )?.content || "";
 
-  const historico = messages
-    .filter((item) => item.role !== "system")
-    .map((item) => ({
+  const contents = messages
+    .filter(item => item.role !== "system")
+    .map(item => ({
       role:
         item.role === "assistant"
           ? "model"
           : "user",
+
       parts: [
         {
           text: item.content
@@ -263,45 +275,45 @@ async function consultarGemini(messages) {
       },
 
       body: JSON.stringify({
+
         systemInstruction: {
           parts: [
             {
-              text: systemMessage
+              text: sistema
             }
           ]
         },
 
-        contents: historico,
+        contents,
 
         generationConfig: {
           temperature: 0.7
         }
+
       })
-    },
-    40000
+    }
   );
 
-  const dados = await resposta.json().catch(() => ({}));
+  const dados =
+    await resposta.json().catch(() => ({}));
 
   if (!resposta.ok) {
 
-    const erro =
-      dados?.error?.message ||
-      `HTTP ${resposta.status}`;
-
     throw new Error(
-      `Gemini: ${erro}`
+      dados?.error?.message ||
+      `HTTP ${resposta.status}`
     );
+
   }
 
   const texto =
     dados?.candidates?.[0]?.content?.parts
-      ?.map((parte) => parte.text || "")
+      ?.map(parte => parte.text || "")
       .join("")
       .trim();
 
   if (!texto) {
-    throw new Error("Gemini retornou resposta vazia");
+    throw new Error("Resposta vazia");
   }
 
   return {
@@ -319,7 +331,7 @@ async function consultarMistral(messages) {
   const apiKey = process.env.MISTRAL_API_KEY;
 
   if (!apiKey) {
-    throw new Error("MISTRAL_API_KEY não configurada");
+    throw new Error("API não configurada");
   }
 
   const modelo = "mistral-small-latest";
@@ -339,30 +351,26 @@ async function consultarMistral(messages) {
         messages,
         temperature: 0.7
       })
-    },
-    40000
+    }
   );
 
-  const dados = await resposta.json().catch(() => ({}));
+  const dados =
+    await resposta.json().catch(() => ({}));
 
   if (!resposta.ok) {
 
-    const erro =
-      dados?.error?.message ||
-      `HTTP ${resposta.status}`;
-
     throw new Error(
-      `Mistral: ${erro}`
+      dados?.error?.message ||
+      `HTTP ${resposta.status}`
     );
+
   }
 
   const texto =
     dados?.choices?.[0]?.message?.content;
 
   if (!texto || !texto.trim()) {
-    throw new Error(
-      "Mistral retornou resposta vazia"
-    );
+    throw new Error("Resposta vazia");
   }
 
   return {
@@ -393,23 +401,9 @@ app.post("/chat", async (req, res) => {
 
   }
 
+  const inicio = Date.now();
+
   const memoria = carregarMemoria();
-
-  /* =======================================================
-     SALVAR PERGUNTA
-  ======================================================= */
-
-  memoria.conversas.push({
-    usuario: pergunta,
-    data: new Date().toISOString()
-  });
-
-  if (memoria.conversas.length > 1000) {
-    memoria.conversas =
-      memoria.conversas.slice(-1000);
-  }
-
-  salvarMemoria(memoria);
 
   /* =======================================================
      CONTEXTO
@@ -418,7 +412,7 @@ app.post("/chat", async (req, res) => {
   const ultimasConversas =
     memoria.conversas
       .slice(-30)
-      .map((item) => {
+      .map(item => {
 
         if (item.usuario) {
           return `Usuário: ${item.usuario}`;
@@ -446,11 +440,11 @@ Responda em português do Brasil.
 
 Seja natural, claro, inteligente e útil.
 
-Responda diretamente à pergunta do usuário.
+Responda diretamente ao usuário.
 
 Não diga que a pergunta foi apenas armazenada.
 
-Não invente que pesquisou na internet quando não pesquisou.
+Não invente que pesquisou na internet.
 
 Use a memória quando ela for relevante.
 
@@ -473,7 +467,7 @@ ${ultimasConversas || "Nenhuma conversa anterior."}
   ];
 
   /* =======================================================
-     ORDEM DAS INTELIGÊNCIAS
+     PROVEDORES
   ======================================================= */
 
   const provedores = [
@@ -494,89 +488,142 @@ ${ultimasConversas || "Nenhuma conversa anterior."}
   let respostaFinal = null;
   let modeloUsado = null;
 
+  let ciclo = 0;
+
   /* =======================================================
-     FAILOVER AUTOMÁTICO
+     LOOP DE 10 MINUTOS
   ======================================================= */
 
-  for (const provedor of provedores) {
+  while (
+    !respostaFinal &&
+    Date.now() - inicio < TEMPO_MAXIMO
+  ) {
 
-    try {
+    ciclo++;
 
-      console.log(
-        `🧠 Tentando ${provedor.nome}...`
-      );
+    console.log(
+      `\n🔄 CICLO ${ciclo} DO MIMETISTA`
+    );
 
-      const resultado =
-        await provedor.funcao(messages);
+    for (const provedor of provedores) {
 
       if (
-        resultado?.texto &&
-        resultado.texto.trim()
+        Date.now() - inicio >=
+        TEMPO_MAXIMO
       ) {
-
-        respostaFinal =
-          resultado.texto.trim();
-
-        modeloUsado =
-          resultado.modelo;
-
-        console.log(
-          `✅ Resposta obtida por ${modeloUsado}`
-        );
-
         break;
       }
 
-    } catch (erro) {
+      try {
 
-      /*
-        O usuário NÃO recebe esse erro.
-        Ele fica somente no log do Render.
-      */
+        console.log(
+          `➡️ Tentando ${provedor.nome}...`
+        );
 
-      console.log(
-        `⚠️ ${provedor.nome} indisponível:`,
-        erro?.message || erro
-      );
+        const resultado =
+          await provedor.funcao(messages);
 
-      console.log(
-        `🔄 Passando para o próximo provedor...`
-      );
+        if (
+          resultado?.texto &&
+          resultado.texto.trim()
+        ) {
+
+          respostaFinal =
+            resultado.texto.trim();
+
+          modeloUsado =
+            resultado.modelo;
+
+          console.log(
+            `✅ RESPOSTA OBTIDA: ${modeloUsado}`
+          );
+
+          break;
+        }
+
+      } catch (erro) {
+
+        console.log(
+          `⚠️ ${provedor.nome} falhou.`
+        );
+
+        console.log(
+          `   Motivo interno: ${erro?.message || erro}`
+        );
+
+        console.log(
+          `   Continuando automaticamente...`
+        );
+
+      }
 
     }
+
+    /* =====================================================
+       SE NENHUMA RESPONDEU
+    ===================================================== */
+
+    if (!respostaFinal) {
+
+      if (
+        Date.now() - inicio <
+        TEMPO_MAXIMO
+      ) {
+
+        console.log(
+          `⏳ Nenhuma respondeu no ciclo ${ciclo}.`
+        );
+
+        console.log(
+          `⏳ Aguardando ${ESPERA_ENTRE_CICLOS / 1000}s...`
+        );
+
+        await esperar(
+          ESPERA_ENTRE_CICLOS
+        );
+
+      }
+
+    }
+
   }
 
   /* =======================================================
-     TODAS FALHARAM
+     LIMITE DE 10 MINUTOS
   ======================================================= */
 
   if (!respostaFinal) {
 
     console.log(
-      "⚠️ Todas as inteligências estão indisponíveis."
+      "⏰ Tempo máximo de 10 minutos atingido."
     );
 
     /*
-      IMPORTANTE:
-      Não retornamos HTTP 500/503.
-      O APK recebe uma resposta normal.
+      O APK recebe apenas uma resposta normal.
+      Nenhum erro técnico é enviado.
     */
 
     return res.json({
       response:
-        "Estou com muita demanda nas minhas inteligências agora. Aguarde um momento e tente novamente.",
+        "Não consegui obter uma resposta neste momento.",
       pesquisou: false,
       memoria: true,
-      modelo: "sistema-fallback"
+      modelo: "sistema"
     });
+
   }
 
   /* =======================================================
-     SALVAR RESPOSTA
+     SALVAR CONVERSA
   ======================================================= */
 
   const memoriaAtualizada =
     carregarMemoria();
+
+  memoriaAtualizada.conversas.push({
+    usuario: pergunta,
+    data: new Date().toISOString()
+  });
 
   memoriaAtualizada.conversas.push({
     assistente: respostaFinal,
@@ -584,7 +631,8 @@ ${ultimasConversas || "Nenhuma conversa anterior."}
   });
 
   if (
-    memoriaAtualizada.conversas.length > 1000
+    memoriaAtualizada.conversas.length >
+    1000
   ) {
 
     memoriaAtualizada.conversas =
@@ -592,10 +640,12 @@ ${ultimasConversas || "Nenhuma conversa anterior."}
 
   }
 
-  salvarMemoria(memoriaAtualizada);
+  salvarMemoria(
+    memoriaAtualizada
+  );
 
   /* =======================================================
-     RESPOSTA PARA O APK
+     RESPOSTA FINAL
   ======================================================= */
 
   return res.json({
@@ -618,17 +668,12 @@ app.use((erro, req, res, next) => {
     erro
   );
 
-  /*
-    Mesmo um erro inesperado não vira
-    aquele JSON 500 feio no aplicativo.
-  */
-
   res.json({
     response:
-      "Estou processando sua solicitação. Tente novamente em instantes.",
+      "Estou processando sua solicitação.",
     pesquisou: false,
     memoria: true,
-    modelo: "sistema-fallback"
+    modelo: "sistema"
   });
 
 });
