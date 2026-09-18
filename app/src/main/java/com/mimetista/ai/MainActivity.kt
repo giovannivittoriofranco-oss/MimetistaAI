@@ -43,7 +43,7 @@ class MainActivity : Activity() {
                 .toRequestBody("application/json".toMediaType())
 
             val request = Request.Builder()
-                .url("http://127.0.0.1:8090/chat")
+                .url("http://127.0.0.1:8091/chat")
                 .post(body)
                 .build()
 
