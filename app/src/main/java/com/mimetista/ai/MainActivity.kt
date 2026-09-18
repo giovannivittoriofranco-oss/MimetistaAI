@@ -10,6 +10,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.io.IOException
 
 class MainActivity : Activity() {
 
@@ -51,11 +52,11 @@ class MainActivity : Activity() {
 
                 override fun onFailure(
                     call: okhttp3.Call,
-                    e: java.io.IOException
+                    e: IOException
                 ) {
                     runOnUiThread {
                         response.text =
-                            "Não consegui conectar à memória local.\n\n${e.message}"
+                            "Não consegui conectar ao MimetistaAI.\n\n${e.message ?: "Erro de conexão"}"
                     }
                 }
 
@@ -63,33 +64,39 @@ class MainActivity : Activity() {
                     call: okhttp3.Call,
                     responseHttp: okhttp3.Response
                 ) {
-                    val resultado =
-                        responseHttp.body?.string() ?: ""
+                    responseHttp.use {
 
-                    runOnUiThread {
+                        val resultado = it.body?.string() ?: ""
 
-                        if (responseHttp.isSuccessful) {
+                        runOnUiThread {
 
-                            try {
-                                val jsonResposta =
-                                    JSONObject(resultado)
+                            if (it.isSuccessful) {
+
+                                try {
+                                    val jsonResposta =
+                                        JSONObject(resultado)
+
+                                    val resposta =
+                                        jsonResposta.optString("response", "")
+
+                                    if (resposta.isNotBlank()) {
+                                        response.text = resposta
+                                    } else {
+                                        response.text =
+                                            "O MimetistaAI não retornou uma resposta."
+                                    }
+
+                                } catch (e: Exception) {
+
+                                    response.text =
+                                        "Resposta recebida, mas não consegui interpretá-la."
+                                }
+
+                            } else {
 
                                 response.text =
-                                    jsonResposta.optString(
-                                        "response",
-                                        "O Mimetista não retornou uma resposta."
-                                    )
-
-                            } catch (e: Exception) {
-
-                                response.text =
-                                    "Erro ao interpretar a resposta."
+                                    "O MimetistaAI encontrou um erro (${it.code}).\n\n$resultado"
                             }
-
-                        } else {
-
-                            response.text =
-                                "Erro da memória local: ${responseHttp.code}\n\n$resultado"
                         }
                     }
                 }
