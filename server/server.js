@@ -12,7 +12,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 /* ================================
-   MEMÓRIA DO MIMETISTAAI
+   MEMÓRIA
 ================================ */
 
 const memoriaDir = path.join(process.cwd(), "memory");
@@ -59,7 +59,7 @@ function salvarMemoria(memoria) {
 }
 
 /* ================================
-   TESTE DO SERVIDOR
+   TESTE
 ================================ */
 
 app.get("/", (req, res) => {
@@ -86,7 +86,19 @@ app.get("/memory", (req, res) => {
 });
 
 /* ================================
-   CHAT + OPENROUTER
+   MODELOS GRATUITOS
+   ORDEM DE TENTATIVA
+================================ */
+
+const modelos = [
+  "openrouter/free",
+  "arcee-ai/trinity-mini:free",
+  "meta-llama/llama-3.3-8b-instruct:free",
+  "deepseek/deepseek-r1-0528:free"
+];
+
+/* ================================
+   CHAT
 ================================ */
 
 app.post("/chat", async (req, res) => {
@@ -102,7 +114,7 @@ app.post("/chat", async (req, res) => {
     const memoria = carregarMemoria();
 
     /* ================================
-       SALVAR PERGUNTA NA MEMÓRIA
+       SALVAR PERGUNTA
     ================================= */
 
     memoria.conversas.push({
@@ -118,13 +130,24 @@ app.post("/chat", async (req, res) => {
     salvarMemoria(memoria);
 
     /* ================================
-       PREPARAR CONTEXTO DA MEMÓRIA
+       CONTEXTO
     ================================= */
 
     const ultimasConversas =
       memoria.conversas
         .slice(-20)
-        .map((item) => `Usuário: ${item.usuario}`)
+        .map((item) => {
+          if (item.usuario) {
+            return `Usuário: ${item.usuario}`;
+          }
+
+          if (item.assistente) {
+            return `MimetistaAI: ${item.assistente}`;
+          }
+
+          return "";
+        })
+        .filter(Boolean)
         .join("\n");
 
     const conhecimentos =
@@ -135,25 +158,25 @@ app.post("/chat", async (req, res) => {
     const promptSistema = `
 Você é o MimetistaAI.
 
-Você é um assistente de inteligência artificial.
-Responda em português do Brasil, de forma clara,
-natural e útil.
+Responda em português do Brasil.
 
-Você possui memória.
-Use as informações da memória quando forem
-relevantes para responder ao usuário.
+Seja natural, claro e útil.
+Não diga que você está sendo preparado.
+Não diga que a pergunta foi apenas armazenada.
+Responda diretamente ao usuário.
 
-Não invente informações pessoais sobre o usuário.
+Você possui memória e pode usar as informações
+relevantes presentes abaixo.
 
-Memória de conhecimentos:
-${conhecimentos || "Nenhum conhecimento salvo ainda."}
+Conhecimentos:
+${conhecimentos || "Nenhum conhecimento salvo."}
 
 Conversas recentes:
 ${ultimasConversas || "Nenhuma conversa anterior."}
 `;
 
     /* ================================
-       VERIFICAR API KEY
+       API KEY
     ================================= */
 
     const apiKey = process.env.OPENROUTER_API_KEY;
@@ -161,86 +184,122 @@ ${ultimasConversas || "Nenhuma conversa anterior."}
     if (!apiKey) {
       return res.status(500).json({
         error:
-          "OPENROUTER_API_KEY não está configurada no Render."
+          "OPENROUTER_API_KEY não está configurada."
       });
     }
 
     /* ================================
-       CHAMAR OPENROUTER
+       TENTAR MODELOS
     ================================= */
 
-    const respostaIA = await fetch(
-      "https://openrouter.ai/api/v1/chat/completions",
-      {
-        method: "POST",
+    let respostaFinal = null;
+    let ultimoErro = null;
+    let modeloUsado = null;
 
-        headers: {
-          "Authorization": `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer":
-            "https://mimetistaai-1.onrender.com",
-          "X-Title": "MimetistaAI"
-        },
+    for (const modelo of modelos) {
 
-        body: JSON.stringify({
-          model: "openrouter/free",
+      try {
 
-          messages: [
-            {
-              role: "system",
-              content: promptSistema
+        console.log(
+          `Tentando modelo: ${modelo}`
+        );
+
+        const respostaIA = await fetch(
+          "https://openrouter.ai/api/v1/chat/completions",
+          {
+            method: "POST",
+
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              "Content-Type": "application/json",
+              "HTTP-Referer":
+                "https://mimetistaai-1.onrender.com",
+              "X-Title": "MimetistaAI"
             },
-            {
-              role: "user",
-              content: pergunta
-            }
-          ],
 
-          temperature: 0.7
-        })
+            body: JSON.stringify({
+              model: modelo,
+
+              messages: [
+                {
+                  role: "system",
+                  content: promptSistema
+                },
+                {
+                  role: "user",
+                  content: pergunta
+                }
+              ],
+
+              temperature: 0.7
+            })
+          }
+        );
+
+        const dados = await respostaIA.json();
+
+        if (!respostaIA.ok) {
+
+          ultimoErro =
+            dados?.error?.message ||
+            `Erro HTTP ${respostaIA.status}`;
+
+          console.log(
+            `Modelo ${modelo} falhou: ${ultimoErro}`
+          );
+
+          continue;
+        }
+
+        const resposta =
+          dados?.choices?.[0]?.message?.content;
+
+        if (
+          resposta &&
+          resposta.trim()
+        ) {
+
+          respostaFinal = resposta;
+          modeloUsado = modelo;
+
+          break;
+        }
+
+        ultimoErro =
+          "O modelo não retornou texto.";
+
+      } catch (erro) {
+
+        ultimoErro =
+          erro?.message ||
+          "Erro desconhecido";
+
+        console.log(
+          `Erro no modelo ${modelo}:`,
+          ultimoErro
+        );
       }
-    );
-
-    const dados = await respostaIA.json();
-
-    /* ================================
-       ERRO DA OPENROUTER
-    ================================= */
-
-    if (!respostaIA.ok) {
-      console.error(
-        "Erro OpenRouter:",
-        JSON.stringify(dados)
-      );
-
-      return res.status(500).json({
-        error: "Erro ao consultar a inteligência artificial.",
-        detalhes:
-          dados?.error?.message ||
-          "OpenRouter retornou um erro."
-      });
     }
 
     /* ================================
-       PEGAR RESPOSTA
+       NENHUM MODELO RESPONDEU
     ================================= */
 
-    const resposta =
-      dados?.choices?.[0]?.message?.content;
+    if (!respostaFinal) {
 
-    if (!resposta) {
-      return res.status(500).json({
+      return res.status(503).json({
         error:
-          "A inteligência artificial não retornou uma resposta."
+          "Nenhum modelo gratuito conseguiu responder agora.",
+        detalhes: ultimoErro
       });
     }
 
     /* ================================
-       SALVAR RESPOSTA NA MEMÓRIA
+       SALVAR RESPOSTA
     ================================= */
 
     memoria.conversas.push({
-      assistente: resposta,
+      assistente: respostaFinal,
       data: new Date().toISOString()
     });
 
@@ -252,24 +311,26 @@ ${ultimasConversas || "Nenhuma conversa anterior."}
     salvarMemoria(memoria);
 
     /* ================================
-       RESPONDER AO APK
+       RESPOSTA PARA O APK
     ================================= */
 
     return res.json({
-      response: resposta,
+      response: respostaFinal,
       pesquisou: false,
-      memoria: true
+      memoria: true,
+      modelo: modeloUsado
     });
 
   } catch (error) {
 
     console.error(
-      "Erro no MimetistaAI:",
+      "Erro geral do MimetistaAI:",
       error
     );
 
     return res.status(500).json({
-      error: "Erro interno do MimetistaAI."
+      error:
+        "Erro interno do MimetistaAI."
     });
   }
 });
