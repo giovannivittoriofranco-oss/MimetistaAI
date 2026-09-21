@@ -39,7 +39,6 @@ class MainActivity : Activity() {
                 return@setOnClickListener
             }
 
-            // Impede vários cliques durante a mesma pergunta
             button.isEnabled = false
             response.text = "Mimetista está pensando..."
 
@@ -51,7 +50,7 @@ class MainActivity : Activity() {
                 .toRequestBody("application/json".toMediaType())
 
             val request = Request.Builder()
-                .url("https://mimetistaai-1.onrender.com/chat")
+                .url("https://joao-victor-franco-ai.onrender.com/chat")
                 .post(body)
                 .build()
 
