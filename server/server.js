@@ -3,6 +3,7 @@ import cors from "cors";
 import "dotenv/config";
 import fs from "fs";
 import path from "path";
+import { GoogleGenAI } from "@google/genai";
 
 const app = express();
 
@@ -37,17 +38,22 @@ if (!fs.existsSync(memoriaFile)) {
   );
 }
 
+function memoriaVazia() {
+  return {
+    conversas: [],
+    conhecimentos: [],
+    fontes: []
+  };
+}
+
 function carregarMemoria() {
   try {
     return JSON.parse(
       fs.readFileSync(memoriaFile, "utf8")
     );
-  } catch {
-    return {
-      conversas: [],
-      conhecimentos: [],
-      fontes: []
-    };
+  } catch (erro) {
+    console.log("⚠️ Não foi possível carregar a memória.");
+    return memoriaVazia();
   }
 }
 
@@ -58,326 +64,245 @@ function salvarMemoria(memoria) {
       JSON.stringify(memoria, null, 2)
     );
   } catch (erro) {
-    console.log("Erro ao salvar memória:", erro.message);
+    console.log(
+      "❌ Erro ao salvar memória:",
+      erro.message
+    );
   }
-}
-
-/* =========================================================
-   TESTE
-========================================================= */
-
-app.get("/", (req, res) => {
-  res.json({
-    status: "online",
-    app: "MimetistaAI",
-    cerebro: "multimodelo",
-    memoria: true
-  });
-});
-
-/* =========================================================
-   MEMÓRIA
-========================================================= */
-
-app.get("/memory", (req, res) => {
-  const memoria = carregarMemoria();
-
-  res.json({
-    conversas: memoria.conversas.length,
-    conhecimentos: memoria.conhecimentos.length,
-    fontes: memoria.fontes.length
-  });
-});
-
-/* =========================================================
-   CONFIGURAÇÕES
-========================================================= */
-
-const TEMPO_MAXIMO = 10 * 60 * 1000; // 10 minutos
-const TIMEOUT_API = 45 * 1000;        // 45 segundos
-const ESPERA_ENTRE_CICLOS = 3000;     // 3 segundos
-
-/* =========================================================
-   ESPERA
-========================================================= */
-
-function esperar(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-/* =========================================================
-   FETCH COM TIMEOUT
-========================================================= */
-
-async function fetchComTimeout(url, options, timeout = TIMEOUT_API) {
-
-  const controller = new AbortController();
-
-  const timer = setTimeout(() => {
-    controller.abort();
-  }, timeout);
-
-  try {
-
-    return await fetch(url, {
-      ...options,
-      signal: controller.signal
-    });
-
-  } finally {
-
-    clearTimeout(timer);
-
-  }
-}
-
-/* =========================================================
-   OPENROUTER
-========================================================= */
-
-async function consultarOpenRouter(messages) {
-
-  const apiKey = process.env.OPENROUTER_API_KEY;
-
-  if (!apiKey) {
-    throw new Error("API não configurada");
-  }
-
-  const modelos = [
-    "openrouter/free",
-    "arcee-ai/trinity-mini:free",
-    "meta-llama/llama-3.3-8b-instruct:free",
-    "deepseek/deepseek-r1-0528:free"
-  ];
-
-  let ultimoErro = "Nenhum modelo respondeu";
-
-  for (const modelo of modelos) {
-
-    try {
-
-      console.log(
-        `🧠 OpenRouter → ${modelo}`
-      );
-
-      const resposta = await fetchComTimeout(
-        "https://openrouter.ai/api/v1/chat/completions",
-        {
-          method: "POST",
-
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-            "HTTP-Referer":
-              "https://mimetistaai-1.onrender.com",
-            "X-Title": "MimetistaAI"
-          },
-
-          body: JSON.stringify({
-            model: modelo,
-            messages,
-            temperature: 0.7
-          })
-        }
-      );
-
-      const dados =
-        await resposta.json().catch(() => ({}));
-
-      if (!resposta.ok) {
-
-        ultimoErro =
-          dados?.error?.message ||
-          `HTTP ${resposta.status}`;
-
-        console.log(
-          `❌ OpenRouter ${modelo}: ${ultimoErro}`
-        );
-
-        continue;
-      }
-
-      const texto =
-        dados?.choices?.[0]?.message?.content;
-
-      if (texto && texto.trim()) {
-
-        return {
-          texto: texto.trim(),
-          modelo: `OpenRouter/${modelo}`
-        };
-
-      }
-
-      ultimoErro = "Resposta vazia";
-
-    } catch (erro) {
-
-      ultimoErro =
-        erro?.name === "AbortError"
-          ? "Timeout"
-          : erro?.message || "Erro";
-
-      console.log(
-        `❌ OpenRouter ${modelo}: ${ultimoErro}`
-      );
-
-    }
-  }
-
-  throw new Error(ultimoErro);
 }
 
 /* =========================================================
    GEMINI
 ========================================================= */
 
-async function consultarGemini(messages) {
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-  const apiKey = process.env.GEMINI_API_KEY;
+let ai = null;
 
-  if (!apiKey) {
-    throw new Error("API não configurada");
+if (GEMINI_API_KEY) {
+  ai = new GoogleGenAI({
+    apiKey: GEMINI_API_KEY
+  });
+
+  console.log("🧠 Gemini API configurada.");
+} else {
+  console.log(
+    "⚠️ GEMINI_API_KEY não configurada no Render."
+  );
+}
+
+/*
+  Mantemos o modelo separado em uma constante
+  para facilitar futuras trocas.
+*/
+const MODELO_GEMINI = "gemini-3.6-flash";
+
+/* =========================================================
+   PESQUISA NA INTERNET
+========================================================= */
+
+function devePesquisar(pergunta) {
+
+  const texto = pergunta.toLowerCase();
+
+  const palavrasPesquisa = [
+    "pesquise",
+    "pesquisar",
+    "pesquisa",
+    "procure na internet",
+    "procure na web",
+    "pesquise na internet",
+    "pesquise na web",
+    "busque na internet",
+    "busque na web",
+    "na internet",
+    "na web",
+    "últimas notícias",
+    "notícias de hoje",
+    "hoje",
+    "atualmente",
+    "atual",
+    "agora",
+    "preço atual",
+    "cotação",
+    "quanto está",
+    "quem ganhou",
+    "resultado de hoje"
+  ];
+
+  return palavrasPesquisa.some(
+    palavra => texto.includes(palavra)
+  );
+}
+
+/* =========================================================
+   CONSULTAR GEMINI
+========================================================= */
+
+async function consultarGemini({
+  pergunta,
+  contexto,
+  pesquisar
+}) {
+
+  if (!ai) {
+    throw new Error(
+      "GEMINI_API_KEY não configurada."
+    );
   }
 
-  const modelo = "gemini-2.5-flash-lite";
+  const promptSistema = `
+Você é o MimetistaAI.
 
-  const sistema =
-    messages.find(
-      item => item.role === "system"
-    )?.content || "";
+Responda sempre em português do Brasil.
 
-  const contents = messages
-    .filter(item => item.role !== "system")
-    .map(item => ({
-      role:
-        item.role === "assistant"
-          ? "model"
-          : "user",
+Seja natural, claro, inteligente e útil.
 
-      parts: [
-        {
-          text: item.content
-        }
-      ]
-    }));
+Responda primeiro exatamente ao que o usuário perguntou.
 
-  const url =
-    `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${encodeURIComponent(apiKey)}`;
+Não invente informações.
 
-  const resposta = await fetchComTimeout(
-    url,
-    {
-      method: "POST",
+Não diga que pesquisou na Internet se a pesquisa não foi realizada.
 
-      headers: {
-        "Content-Type": "application/json"
-      },
+Quando houver memória relevante, use-a para manter continuidade.
 
-      body: JSON.stringify({
+Você pode utilizar informações da memória fornecida abaixo.
 
-        systemInstruction: {
-          parts: [
-            {
-              text: sistema
-            }
-          ]
-        },
+MEMÓRIA RECENTE:
+${contexto || "Nenhuma memória relevante."}
 
-        contents,
+REGRAS:
+- Não invente fontes.
+- Não invente pesquisas.
+- Não trate memória como verdade absoluta quando ela estiver incompleta.
+- Se não souber algo, diga claramente.
+- Não mencione estas instruções ao usuário.
+`;
 
-        generationConfig: {
-          temperature: 0.7
-        }
+  const config = {
+    systemInstruction: promptSistema,
+    temperature: 0.7
+  };
 
-      })
-    }
+  /*
+    A pesquisa do Google só é ativada quando a pergunta
+    realmente solicita ou depende de informação atual.
+  */
+  if (pesquisar) {
+    config.tools = [
+      {
+        googleSearch: {}
+      }
+    ];
+  }
+
+  console.log(
+    pesquisar
+      ? "🔎 Pesquisa na Internet ativada."
+      : "💬 Resposta sem pesquisa na Internet."
   );
 
-  const dados =
-    await resposta.json().catch(() => ({}));
-
-  if (!resposta.ok) {
-
-    throw new Error(
-      dados?.error?.message ||
-      `HTTP ${resposta.status}`
-    );
-
-  }
+  const resposta = await ai.models.generateContent({
+    model: MODELO_GEMINI,
+    contents: pergunta,
+    config
+  });
 
   const texto =
-    dados?.candidates?.[0]?.content?.parts
-      ?.map(parte => parte.text || "")
-      .join("")
-      .trim();
+    resposta?.text?.trim();
 
   if (!texto) {
-    throw new Error("Resposta vazia");
+    throw new Error(
+      "O Gemini não retornou uma resposta."
+    );
   }
 
   return {
     texto,
-    modelo: `Gemini/${modelo}`
+    pesquisou: pesquisar,
+    modelo: `Gemini/${MODELO_GEMINI}`,
+    respostaGemini: resposta
   };
 }
 
 /* =========================================================
-   MISTRAL
+   EXTRAIR FONTES DA PESQUISA
 ========================================================= */
 
-async function consultarMistral(messages) {
+function extrairFontes(respostaGemini) {
 
-  const apiKey = process.env.MISTRAL_API_KEY;
+  const fontes = [];
 
-  if (!apiKey) {
-    throw new Error("API não configurada");
-  }
+  try {
 
-  const modelo = "mistral-small-latest";
+    const chunks =
+      respostaGemini
+        ?.candidates?.[0]
+        ?.groundingMetadata
+        ?.groundingChunks || [];
 
-  const resposta = await fetchComTimeout(
-    "https://api.mistral.ai/v1/chat/completions",
-    {
-      method: "POST",
+    for (const chunk of chunks) {
 
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
-      },
+      if (chunk?.web?.uri) {
 
-      body: JSON.stringify({
-        model: modelo,
-        messages,
-        temperature: 0.7
-      })
+        fontes.push({
+          titulo:
+            chunk.web.title ||
+            "Fonte da Internet",
+
+          url: chunk.web.uri
+        });
+
+      }
+
     }
-  );
 
-  const dados =
-    await resposta.json().catch(() => ({}));
+  } catch (erro) {
 
-  if (!resposta.ok) {
-
-    throw new Error(
-      dados?.error?.message ||
-      `HTTP ${resposta.status}`
+    console.log(
+      "⚠️ Não foi possível extrair fontes."
     );
 
   }
 
-  const texto =
-    dados?.choices?.[0]?.message?.content;
-
-  if (!texto || !texto.trim()) {
-    throw new Error("Resposta vazia");
-  }
-
-  return {
-    texto: texto.trim(),
-    modelo: `Mistral/${modelo}`
-  };
+  return fontes;
 }
+
+/* =========================================================
+   TESTE DO SERVIDOR
+========================================================= */
+
+app.get("/", (req, res) => {
+
+  res.json({
+    status: "online",
+    app: "MimetistaAI",
+    cerebro: "open-source",
+    memoria: true
+  });
+
+});
+
+/* =========================================================
+   TESTE DA MEMÓRIA
+========================================================= */
+
+app.get("/memory", (req, res) => {
+
+  const memoria = carregarMemoria();
+
+  res.json({
+    conversas:
+      memoria.conversas.length,
+
+    conhecimentos:
+      memoria.conhecimentos.length,
+
+    fontes:
+      memoria.fontes.length
+  });
+
+});
 
 /* =========================================================
    CHAT
@@ -401,259 +326,190 @@ app.post("/chat", async (req, res) => {
 
   }
 
-  const inicio = Date.now();
-
-  const memoria = carregarMemoria();
-
-  /* =======================================================
-     CONTEXTO
-  ======================================================= */
-
-  const ultimasConversas =
-    memoria.conversas
-      .slice(-30)
-      .map(item => {
-
-        if (item.usuario) {
-          return `Usuário: ${item.usuario}`;
-        }
-
-        if (item.assistente) {
-          return `MimetistaAI: ${item.assistente}`;
-        }
-
-        return "";
-
-      })
-      .filter(Boolean)
-      .join("\n");
-
-  const conhecimentos =
-    memoria.conhecimentos
-      .slice(-30)
-      .join("\n");
-
-  const promptSistema = `
-Você é o MimetistaAI.
-
-Responda em português do Brasil.
-
-Seja natural, claro, inteligente e útil.
-
-Responda diretamente ao usuário.
-
-Não diga que a pergunta foi apenas armazenada.
-
-Não invente que pesquisou na internet.
-
-Use a memória quando ela for relevante.
-
-Conhecimentos salvos:
-${conhecimentos || "Nenhum conhecimento salvo."}
-
-Conversas recentes:
-${ultimasConversas || "Nenhuma conversa anterior."}
-`;
-
-  const messages = [
-    {
-      role: "system",
-      content: promptSistema
-    },
-    {
-      role: "user",
-      content: pergunta
-    }
-  ];
-
-  /* =======================================================
-     PROVEDORES
-  ======================================================= */
-
-  const provedores = [
-    {
-      nome: "OpenRouter",
-      funcao: consultarOpenRouter
-    },
-    {
-      nome: "Gemini",
-      funcao: consultarGemini
-    },
-    {
-      nome: "Mistral",
-      funcao: consultarMistral
-    }
-  ];
-
-  let respostaFinal = null;
-  let modeloUsado = null;
-
-  let ciclo = 0;
-
-  /* =======================================================
-     LOOP DE 10 MINUTOS
-  ======================================================= */
-
-  while (
-    !respostaFinal &&
-    Date.now() - inicio < TEMPO_MAXIMO
-  ) {
-
-    ciclo++;
+  try {
 
     console.log(
-      `\n🔄 CICLO ${ciclo} DO MIMETISTA`
+      `\n💬 Pergunta recebida: ${pergunta}`
     );
 
-    for (const provedor of provedores) {
+    const memoria =
+      carregarMemoria();
 
-      if (
-        Date.now() - inicio >=
-        TEMPO_MAXIMO
-      ) {
-        break;
-      }
+    /* =====================================================
+       CONTEXTO DA MEMÓRIA
+    ===================================================== */
 
-      try {
+    const ultimasConversas =
+      memoria.conversas
+        .slice(-30)
+        .map(item => {
 
-        console.log(
-          `➡️ Tentando ${provedor.nome}...`
-        );
+          if (item.usuario) {
+            return `Usuário: ${item.usuario}`;
+          }
 
-        const resultado =
-          await provedor.funcao(messages);
+          if (item.assistente) {
+            return `MimetistaAI: ${item.assistente}`;
+          }
 
-        if (
-          resultado?.texto &&
-          resultado.texto.trim()
-        ) {
+          return "";
 
-          respostaFinal =
-            resultado.texto.trim();
+        })
+        .filter(Boolean)
+        .join("\n");
 
-          modeloUsado =
-            resultado.modelo;
+    const conhecimentos =
+      memoria.conhecimentos
+        .slice(-30)
+        .map(item =>
+          typeof item === "string"
+            ? item
+            : JSON.stringify(item)
+        )
+        .join("\n");
 
-          console.log(
-            `✅ RESPOSTA OBTIDA: ${modeloUsado}`
-          );
+    const contexto = `
+CONVERSAS RECENTES:
+${ultimasConversas || "Nenhuma."}
 
-          break;
-        }
+CONHECIMENTOS:
+${conhecimentos || "Nenhum."}
+`;
 
-      } catch (erro) {
+    /* =====================================================
+       PESQUISA
+    ===================================================== */
 
-        console.log(
-          `⚠️ ${provedor.nome} falhou.`
-        );
+    const pesquisar =
+      devePesquisar(pergunta);
 
-        console.log(
-          `   Motivo interno: ${erro?.message || erro}`
-        );
+    if (pesquisar) {
 
-        console.log(
-          `   Continuando automaticamente...`
-        );
-
-      }
+      console.log(
+        "🔎 Pesquisa na Internet solicitada."
+      );
 
     }
 
     /* =====================================================
-       SE NENHUMA RESPONDEU
+       GEMINI
     ===================================================== */
 
-    if (!respostaFinal) {
+    const resultado =
+      await consultarGemini({
+        pergunta,
+        contexto,
+        pesquisar
+      });
 
-      if (
-        Date.now() - inicio <
-        TEMPO_MAXIMO
-      ) {
+    const respostaFinal =
+      resultado.texto;
 
-        console.log(
-          `⏳ Nenhuma respondeu no ciclo ${ciclo}.`
-        );
+    /* =====================================================
+       FONTES
+    ===================================================== */
 
-        console.log(
-          `⏳ Aguardando ${ESPERA_ENTRE_CICLOS / 1000}s...`
-        );
+    const novasFontes =
+      extrairFontes(
+        resultado.respostaGemini
+      );
 
-        await esperar(
-          ESPERA_ENTRE_CICLOS
-        );
+    if (novasFontes.length > 0) {
 
-      }
+      memoria.fontes.push(
+        ...novasFontes.map(fonte => ({
+          ...fonte,
+          pergunta,
+          data:
+            new Date().toISOString()
+        }))
+      );
 
     }
 
-  }
+    /* =====================================================
+       SALVAR CONVERSA
+    ===================================================== */
 
-  /* =======================================================
-     LIMITE DE 10 MINUTOS
-  ======================================================= */
+    memoria.conversas.push({
+      usuario: pergunta,
+      data:
+        new Date().toISOString()
+    });
 
-  if (!respostaFinal) {
+    memoria.conversas.push({
+      assistente: respostaFinal,
+      data:
+        new Date().toISOString()
+    });
 
-    console.log(
-      "⏰ Tempo máximo de 10 minutos atingido."
-    );
+    /* =====================================================
+       LIMITE DA MEMÓRIA
+    ===================================================== */
 
-    /*
-      O APK recebe apenas uma resposta normal.
-      Nenhum erro técnico é enviado.
-    */
+    if (
+      memoria.conversas.length > 1000
+    ) {
+
+      memoria.conversas =
+        memoria.conversas.slice(-1000);
+
+    }
+
+    if (
+      memoria.fontes.length > 500
+    ) {
+
+      memoria.fontes =
+        memoria.fontes.slice(-500);
+
+    }
+
+    salvarMemoria(memoria);
+
+    /* =====================================================
+       RESPOSTA PARA O APK
+    ===================================================== */
 
     return res.json({
+
+      response:
+        respostaFinal,
+
+      pesquisou:
+        resultado.pesquisou,
+
+      memoria: true,
+
+      modelo:
+        resultado.modelo,
+
+      fontes:
+        novasFontes
+
+    });
+
+  } catch (erro) {
+
+    console.log(
+      "❌ Erro no MimetistaAI:",
+      erro?.message || erro
+    );
+
+    return res.status(500).json({
+
       response:
         "Não consegui obter uma resposta neste momento.",
+
       pesquisou: false,
+
       memoria: true,
+
       modelo: "sistema"
+
     });
 
   }
-
-  /* =======================================================
-     SALVAR CONVERSA
-  ======================================================= */
-
-  const memoriaAtualizada =
-    carregarMemoria();
-
-  memoriaAtualizada.conversas.push({
-    usuario: pergunta,
-    data: new Date().toISOString()
-  });
-
-  memoriaAtualizada.conversas.push({
-    assistente: respostaFinal,
-    data: new Date().toISOString()
-  });
-
-  if (
-    memoriaAtualizada.conversas.length >
-    1000
-  ) {
-
-    memoriaAtualizada.conversas =
-      memoriaAtualizada.conversas.slice(-1000);
-
-  }
-
-  salvarMemoria(
-    memoriaAtualizada
-  );
-
-  /* =======================================================
-     RESPOSTA FINAL
-  ======================================================= */
-
-  return res.json({
-    response: respostaFinal,
-    pesquisou: false,
-    memoria: true,
-    modelo: modeloUsado
-  });
 
 });
 
@@ -661,31 +517,42 @@ ${ultimasConversas || "Nenhuma conversa anterior."}
    ERRO GLOBAL
 ========================================================= */
 
-app.use((erro, req, res, next) => {
+app.use(
+  (erro, req, res, next) => {
 
-  console.error(
-    "Erro interno:",
-    erro
-  );
+    console.error(
+      "❌ Erro interno:",
+      erro
+    );
 
-  res.json({
-    response:
-      "Estou processando sua solicitação.",
-    pesquisou: false,
-    memoria: true,
-    modelo: "sistema"
-  });
+    res.status(500).json({
 
-});
+      response:
+        "Ocorreu um erro no MimetistaAI.",
+
+      pesquisou: false,
+
+      memoria: true,
+
+      modelo: "sistema"
+
+    });
+
+  }
+);
 
 /* =========================================================
    SERVIDOR
 ========================================================= */
 
-app.listen(PORT, "0.0.0.0", () => {
+app.listen(
+  PORT,
+  "0.0.0.0",
+  () => {
 
-  console.log(
-    `MimetistaAI online na porta ${PORT}`
-  );
+    console.log(
+      `🚀 MimetistaAI online na porta ${PORT}`
+    );
 
-});
+  }
+);
