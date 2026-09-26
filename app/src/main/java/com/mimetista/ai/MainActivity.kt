@@ -50,7 +50,7 @@ class MainActivity : Activity() {
                 .toRequestBody("application/json".toMediaType())
 
             val request = Request.Builder()
-                .url("https://joao-victor-franco-ai.onrender.com/chat")
+                .url("https://mimetistaai-1.onrender.com/chat")
                 .post(body)
                 .build()
 
